@@ -21,22 +21,19 @@ def procesar_informes(lista_archivos):
                 continue
 
             df = pd.read_excel(xls, sheet_name="Informe de avance", header=None, engine="openpyxl")
-
             delegacion = str(df.iloc[2, 7]).strip()  # Celda G3
 
-            # Buscar encabezados (usamos fila 9 por estructura conocida)
+            # Identificar columnas de resultados desde fila 9
             encabezados = df.iloc[9]
-            df_data = df.iloc[10:].copy()
-            df_data.columns = encabezados
+            columnas_resultado = [i for i, val in enumerate(encabezados) if str(val).lower().startswith("resultado")]
 
-            # Buscar columnas de resultados
-            columnas_resultado = [col for col in df_data.columns if str(col).lower().startswith("resultado")]
+            for i in range(10, len(df)):  # Empezamos desde fila 10
+                fila = df.iloc[i]
 
-            for _, fila in df_data.iterrows():
-                lider = fila.get("Líder Estratégico") or fila.get("Lider")
-                linea = fila.get("Línea de Acción") or fila.get("Linea de Accion")
-                tipo_indicador = fila.get("Indicador") or fila.get("Indicadores")
-                meta = fila.get("Meta")
+                lider = fila[3]
+                linea = fila[4]
+                tipo_indicador = fila[5]
+                meta = fila[7]
 
                 if pd.notna(lider) and pd.notna(linea) and pd.notna(tipo_indicador) and pd.notna(meta):
                     fila_resultado = {
@@ -47,8 +44,10 @@ def procesar_informes(lista_archivos):
                         "Meta": meta
                     }
 
-                    for col in columnas_resultado:
-                        fila_resultado[col] = fila.get(col)
+                    # Extraer todos los campos que sean "Resultado"
+                    for col_index in columnas_resultado:
+                        nombre_col = encabezados[col_index]
+                        fila_resultado[nombre_col] = fila[col_index]
 
                     resultados.append(fila_resultado)
 
@@ -65,7 +64,6 @@ if archivos:
         st.success("✅ Archivos procesados correctamente.")
         st.dataframe(df_resultado)
 
-        # Descargar Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_resultado.to_excel(writer, index=False, sheet_name="Resumen Indicadores")
@@ -76,3 +74,6 @@ if archivos:
             file_name="resumen_informe_avance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+    else:
+        st.info("ℹ️ No se encontraron datos válidos.")
+
