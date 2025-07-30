@@ -24,23 +24,33 @@ def procesar_informes(lista_archivos):
 
             delegacion = str(df.iloc[2, 7]).strip()  # Celda G3
 
-            for i in range(len(df)):
-                fila = df.iloc[i]
+            # Buscar encabezados (usamos fila 9 por estructura conocida)
+            encabezados = df.iloc[9]
+            df_data = df.iloc[10:].copy()
+            df_data.columns = encabezados
 
-                lider = fila[3]
-                linea = fila[4]
-                tipo_indicador = fila[5]
-                meta = fila[7]
+            # Buscar columnas de resultados
+            columnas_resultado = [col for col in df_data.columns if str(col).lower().startswith("resultado")]
 
-                # Validar que sea una fila con datos reales
+            for _, fila in df_data.iterrows():
+                lider = fila.get("Líder Estratégico") or fila.get("Lider")
+                linea = fila.get("Línea de Acción") or fila.get("Linea de Accion")
+                tipo_indicador = fila.get("Indicador") or fila.get("Indicadores")
+                meta = fila.get("Meta")
+
                 if pd.notna(lider) and pd.notna(linea) and pd.notna(tipo_indicador) and pd.notna(meta):
-                    resultados.append({
+                    fila_resultado = {
                         "Delegación": delegacion,
                         "Líder Estratégico": lider,
                         "Línea de Acción": linea,
                         "Tipo de Indicador": tipo_indicador,
                         "Meta": meta
-                    })
+                    }
+
+                    for col in columnas_resultado:
+                        fila_resultado[col] = fila.get(col)
+
+                    resultados.append(fila_resultado)
 
         except Exception as e:
             st.error(f"❌ Error procesando '{archivo.name}': {e}")
@@ -66,5 +76,3 @@ if archivos:
             file_name="resumen_informe_avance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-
