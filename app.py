@@ -5,7 +5,7 @@ import io
 st.title("📋 Consolidado de Indicadores - Informe de Avance")
 st.write("Carga uno o varios archivos Excel para extraer indicadores desde la hoja **'Informe de avance'**.")
 
-# Cargar múltiples archivos
+# Subida de archivos
 archivos = st.file_uploader("📁 Sube archivos .xlsm o .xlsx", type=["xlsm", "xlsx"], accept_multiple_files=True)
 
 @st.cache_data
@@ -15,32 +15,49 @@ def procesar_informes(lista_archivos):
     for archivo in lista_archivos:
         try:
             xls = pd.ExcelFile(archivo, engine="openpyxl")
-
             if "Informe de avance" not in xls.sheet_names:
                 st.warning(f"⚠️ El archivo '{archivo.name}' no tiene hoja 'Informe de avance'. Se omite.")
                 continue
 
             df = pd.read_excel(xls, sheet_name="Informe de avance", header=None, engine="openpyxl")
+            delegacion = str(df.iloc[2, 7]).strip() if pd.notna(df.iloc[2, 7]) else "Desconocida"
 
-            delegacion = str(df.iloc[2, 7]).strip()  # Celda G3
-
+            # Buscar fila de encabezado que contenga la palabra 'Indicadores'
+            header_row_index = None
             for i in range(len(df)):
-                fila = df.iloc[i]
+                if "Indicadores" in df.iloc[i].astype(str).values:
+                    header_row_index = i
+                    break
 
-                lider = fila[3]
-                linea = fila[4]
-                tipo_indicador = fila[5]
-                meta = fila[7]
+            if header_row_index is None:
+                st.warning(f"⚠️ No se encontró fila de encabezado en '{archivo.name}'.")
+                continue
 
-                # Validar que sea una fila con datos reales
-                if pd.notna(lider) and pd.notna(linea) and pd.notna(tipo_indicador) and pd.notna(meta):
-                    resultados.append({
+            df_data = pd.read_excel(
+                xls,
+                sheet_name="Informe de avance",
+                header=header_row_index,
+                engine="openpyxl"
+            )
+
+            # Detectar columnas de resultados
+            columnas_resultado = [col for col in df_data.columns if str(col).lower().startswith("resultado")]
+
+            for _, fila in df_data.iterrows():
+                if pd.notna(fila.get("Lider")) and pd.notna(fila.get("Linea de Accion")) and pd.notna(fila.get("Indicadores")) and pd.notna(fila.get("Meta")):
+                    fila_resultado = {
                         "Delegación": delegacion,
-                        "Líder Estratégico": lider,
-                        "Línea de Acción": linea,
-                        "Tipo de Indicador": tipo_indicador,
-                        "Meta": meta
-                    })
+                        "Líder Estratégico": fila.get("Lider"),
+                        "Línea de Acción": fila.get("Linea de Accion"),
+                        "Tipo de Indicador": fila.get("Indicadores"),
+                        "Meta": fila.get("Meta")
+                    }
+
+                    # Añadir resultados por trimestre si existen
+                    for col in columnas_resultado:
+                        fila_resultado[col] = fila.get(col)
+
+                    resultados.append(fila_resultado)
 
         except Exception as e:
             st.error(f"❌ Error procesando '{archivo.name}': {e}")
@@ -66,3 +83,6 @@ if archivos:
             file_name="resumen_informe_avance.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+    else:
+        st.info("No se encontraron datos válidos en los archivos cargados.")
+
