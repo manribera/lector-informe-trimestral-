@@ -40,7 +40,6 @@ def procesar_informes(lista_archivos):
                         "Línea de Acción": linea,
                         "Tipo de Indicador": tipo_indicador,
                         "Meta": meta
-                        "Reultado": resultado
                     })
 
         except Exception as e:
