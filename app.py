@@ -4,69 +4,40 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="Lector Sembremos Seguridad", layout="wide")
+st.set_page_config(page_title="Extractor de Indicadores", layout="wide")
+st.title("Extractor Sembremos – Columnas específicas")
+st.caption("Delegación, Líder Estratégico, Línea de Acción, Indicador, Descripción del Indicador, Meta, Resultado")
 
-st.title("Lector de Indicadores – Sembremos Seguridad")
-st.caption("Sube el libro y extrae: Delegación, Líder Estratégico, Problemática Priorizada, Indicador, Descripción del Indicador, Meta, Resultados 1T, Resultados 2T.")
-
-# === Utilidades ===
+# === Columnas requeridas (en ese orden) ===
 REQ_HEADERS = [
     "Delegación",
     "Líder Estratégico",
-    "Problemática Priorizada",
+    "Línea de Acción",
     "Indicador",
     "Descripción del Indicador",
     "Meta",
-    "Resultados 1T",
-    "Resultados 2T",
+    "Resultado",
 ]
+
+# Variantes aceptadas por cada encabezado
+VARIANTS = {
+    "delegación": ["delegación", "delegacion", "delegacion policial"],
+    "líder estratégico": ["líder estratégico", "lider estrategico", "jefe estrategico", "líder estrategico"],
+    "línea de acción": ["línea de acción", "linea de accion", "linea de acción", "líneas de acción", "lineas de accion"],
+    "indicador": ["indicador", "nombre del indicador"],
+    "descripción del indicador": ["descripción del indicador", "descripcion del indicador", "descripcion indicador", "detalle del indicador"],
+    "meta": ["meta", "meta anual", "meta trimestral"],
+    "resultado": ["resultado", "resultados", "resultado 1t", "resultado 2t", "resultados 1t", "resultados 2t"],
+}
 
 def normalize(s: str) -> str:
     if s is None:
         return ""
     s = str(s).strip().lower()
-    # quitar acentos
-    s = "".join(
-        ch for ch in unicodedata.normalize("NFKD", s)
-        if not unicodedata.combining(ch)
-    )
-    # espacios múltiples -> uno
+    s = "".join(ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch))
     while "  " in s:
         s = s.replace("  ", " ")
     return s
-
-# mapear columnas por nombre normalizado
-def build_header_map(cols):
-    norm_map = {normalize(c): c for c in cols}
-    return norm_map
-
-def find_cols_for_required(df: pd.DataFrame):
-    norm_map = build_header_map(df.columns)
-    found = {}
-    missing = []
-    req_norm = [normalize(h) for h in REQ_HEADERS]
-    for req, req_n in zip(REQ_HEADERS, req_norm):
-        if req_n in norm_map:
-            found[req] = norm_map[req_n]
-        else:
-            # tolerar variantes frecuentes
-            variants = {
-                "descripcion del indicador": ["descripcion del indicador", "descripción del indicador", "descripcion indicador"],
-                "lider estrategico": ["lider estrategico", "líder estrategico", "lider estrategico(a)", "jefe estrategico"],
-            }
-            if req_n in variants:
-                chosen = None
-                for v in variants[req_n]:
-                    if v in norm_map:
-                        chosen = norm_map[v]
-                        break
-                if chosen:
-                    found[req] = chosen
-                else:
-                    missing.append(req)
-            else:
-                missing.append(req)
-    return found, missing
 
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
@@ -74,90 +45,101 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name="Extracción")
     return buf.getvalue()
 
-# === UI ===
-file = st.file_uploader("Sube tu archivo Excel (.xlsx o .xlsm)", type=["xlsx", "xlsm"])
-if file:
-    # Descubrir hojas
-    try:
-        xls = pd.ExcelFile(file, engine="openpyxl")
-        sheet = st.selectbox("Elige la hoja de trabajo", xls.sheet_names, index=0)
-        header_row_1_based = st.number_input("Fila de encabezados (1 = primera fila)", min_value=1, value=1, step=1)
-        header_row = header_row_1_based - 1
-
-        # Leer con la fila de encabezados seleccionada
-        df = pd.read_excel(xls, sheet_name=sheet, header=header_row, engine="openpyxl")
-
-        st.write("**Vista previa (primeras 30 filas):**")
-        st.dataframe(df.head(30), use_container_width=True)
-
-        # Encontrar columnas requeridas
-        col_map, missing = find_cols_for_required(df)
-
-        # Mostrar mapeo
-        with st.expander("Ver mapeo de encabezados detectados"):
-            st.json(col_map)
-            if missing:
-                st.warning("No se encontraron estos encabezados: " + ", ".join(missing))
-
-        # Permitir corrección manual si falta algo
-        if missing:
-            st.info("Puedes asignar manualmente columnas para los encabezados faltantes:")
-            for req in missing:
-                choice = st.selectbox(
-                    f"Selecciona la columna para «{req}»",
-                    options=["(no asignar)"] + list(df.columns),
-                    key=f"fix_{req}"
-                )
-                if choice != "(no asignar)":
-                    col_map[req] = choice
-            # recalcular faltantes
-            missing = [r for r in REQ_HEADERS if r not in col_map]
-
-        # Si ya tenemos al menos una columna, permitir extraer
-        if len(col_map) > 0:
-            # Construir DataFrame de salida en el orden solicitado
-            ordered_cols = []
-            for req in REQ_HEADERS:
-                if req in col_map:
-                    ordered_cols.append(col_map[req])
-                else:
-                    # si falta, crear columna vacía
-                    df[req] = ""
-                    ordered_cols.append(req)
-
-            out_df = df[ordered_cols].copy()
-            # Renombrar a los nombres "oficiales"
-            rename_map = {old: new for new, old in col_map.items()}
-            out_df.rename(columns=rename_map, inplace=True)
-
-            st.success("Extracción generada.")
-            st.dataframe(out_df.head(50), use_container_width=True)
-
-            # Descargas
-            csv_bytes = out_df.to_csv(index=False).encode("utf-8-sig")
-            xlsx_bytes = to_excel_bytes(out_df)
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    "⬇️ Descargar CSV",
-                    data=csv_bytes,
-                    file_name="extraccion_sembremos.csv",
-                    mime="text/csv"
-                )
-            with col2:
-                st.download_button(
-                    "⬇️ Descargar Excel",
-                    data=xlsx_bytes,
-                    file_name="extraccion_sembremos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-            if missing:
-                st.warning("Aún faltan columnas sin asignar: " + ", ".join(missing))
+def auto_map_columns(df: pd.DataFrame):
+    # mapa normalizado -> real
+    norm_map = {normalize(c): c for c in df.columns}
+    found = {}
+    missing = []
+    for req in REQ_HEADERS:
+        req_n = normalize(req)
+        # Primero, coincidencia exacta
+        if req_n in norm_map:
+            found[req] = norm_map[req_n]
+            continue
+        # Luego, probar variantes
+        variants = VARIANTS.get(req_n, [])
+        chosen = None
+        for v in variants:
+            v_n = normalize(v)
+            if v_n in norm_map:
+                chosen = norm_map[v_n]
+                break
+        if chosen:
+            found[req] = chosen
         else:
-            st.error("No se detectó ningún encabezado requerido. Revisa la fila de encabezados o asigna manualmente.")
-    except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
-else:
-    st.info("Sube tu archivo para comenzar.")
+            missing.append(req)
+    return found, missing
+
+file = st.file_uploader("Sube tu Excel (.xlsx o .xlsm)", type=["xlsx", "xlsm"])
+if not file:
+    st.info("Sube el archivo para comenzar.")
+    st.stop()
+
+try:
+    xls = pd.ExcelFile(file, engine="openpyxl")
+except Exception as e:
+    st.error(f"No se pudo abrir el archivo: {e}")
+    st.stop()
+
+sheet = st.selectbox("Elige la hoja", xls.sheet_names, index=0)
+header_row_1 = st.number_input("Fila de encabezados (1 = primera fila)", min_value=1, value=1)
+header_row = header_row_1 - 1
+
+df = pd.read_excel(xls, sheet_name=sheet, header=header_row, engine="openpyxl")
+st.write("**Vista previa (primeras 30 filas):**")
+st.dataframe(df.head(30), use_container_width=True)
+
+col_map, missing = auto_map_columns(df)
+
+with st.expander("Mapeo detectado"):
+    st.json(col_map)
+    if missing:
+        st.warning("Faltan: " + ", ".join(missing))
+
+# Corrección manual de faltantes
+if missing:
+    st.info("Asigna manualmente columnas para los faltantes:")
+    for req in missing:
+        choice = st.selectbox(
+            f"Columna para «{req}»",
+            options=["(no asignar)"] + list(df.columns),
+            key=f"fix_{req}"
+        )
+        if choice != "(no asignar)":
+            col_map[req] = choice
+    missing = [r for r in REQ_HEADERS if r not in col_map]
+
+# Construir salida en el orden requerido
+ordered_cols = []
+for req in REQ_HEADERS:
+    if req in col_map:
+        ordered_cols.append(col_map[req])
+    else:
+        df[req] = ""
+        ordered_cols.append(req)
+
+out_df = df[ordered_cols].copy()
+
+# Renombrar a los nombres "oficiales"
+rename_map = {v: k for k, v in col_map.items()}
+out_df.rename(columns=rename_map, inplace=True)
+
+# Si “Resultado” vino de “Resultados 1T/2T/etc.” lo renombra igualmente a “Resultado”
+for c in out_df.columns:
+    if normalize(c) in [normalize(v) for v in VARIANTS["resultado"]]:
+        out_df.rename(columns={c: "Resultado"}, inplace=True)
+
+st.success("Extracción generada.")
+st.dataframe(out_df.head(50), use_container_width=True)
+
+# Descargas
+csv_bytes = out_df.to_csv(index=False).encode("utf-8-sig")
+xlsx_bytes = to_excel_bytes(out_df)
+
+c1, c2 = st.columns(2)
+with c1:
+    st.download_button("⬇️ Descargar CSV", data=csv_bytes, file_name="extraccion_sembremos.csv", mime="text/csv")
+with c2:
+    st.download_button("⬇️ Descargar Excel", data=xlsx_bytes,
+                       file_name="extraccion_sembremos.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
