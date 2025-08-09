@@ -120,4 +120,13 @@ if archivos:
             df_resultado.to_excel(writer, index=False, sheet_name="Resumen Indicadores")
 
         st.download_button(
+            label="📥 Descargar resumen en Excel",
+            data=output.getvalue(),
+            file_name="resumen_informe_avance.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.warning("No se encontraron filas válidas para consolidar.")
+else:
+    st.info("Sube uno o varios archivos para comenzar.")
 
