@@ -21,14 +21,27 @@ def procesar_informes(lista_archivos):
                 continue
 
             df = pd.read_excel(xls, sheet_name="Informe de avance", header=None, engine="openpyxl")
-            delegacion = str(df.iloc[2, 7]).strip()  # Celda G3
 
-            # Identificar columnas de resultados desde fila 9
+            # Celda G3 -> fila índice 2, columna índice 6
+            delegacion = ""
+            if df.shape[0] > 2 and df.shape[1] > 6:
+                delegacion = str(df.iloc[2, 6]).strip()
+
+            # Encabezados visibles en fila 10 -> índice 9
+            if df.shape[0] <= 9:
+                st.warning(f"⚠️ '{archivo.name}': no hay suficientes filas para leer encabezados (se esperaba fila 10).")
+                continue
+
             encabezados = df.iloc[9]
-            columnas_resultado = [i for i, val in enumerate(encabezados) if str(val).lower().startswith("resultado")]
+            columnas_resultado = [i for i, val in enumerate(encabezados) if str(val).strip().lower().startswith("resultado")]
 
-            for i in range(10, len(df)):  # Empezamos desde fila 10
+            # Datos desde la fila 11 -> índice 10
+            for i in range(10, len(df)):
                 fila = df.iloc[i]
+
+                # Verificación mínima de ancho (necesitamos al menos hasta la col 7 para 'meta')
+                if len(fila) <= 7:
+                    continue
 
                 lider = fila[3]
                 linea = fila[4]
@@ -44,10 +57,11 @@ def procesar_informes(lista_archivos):
                         "Meta": meta
                     }
 
-                    # Extraer todos los campos que sean "Resultado"
+                    # Extraer todas las columnas cuyo encabezado empiece con "Resultado"
                     for col_index in columnas_resultado:
-                        nombre_col = encabezados[col_index]
-                        fila_resultado[nombre_col] = fila[col_index]
+                        if col_index < len(fila):
+                            nombre_col = str(encabezados[col_index])
+                            fila_resultado[nombre_col] = fila[col_index]
 
                     resultados.append(fila_resultado)
 
@@ -62,7 +76,7 @@ if archivos:
 
     if not df_resultado.empty:
         st.success("✅ Archivos procesados correctamente.")
-        st.dataframe(df_resultado)
+        st.dataframe(df_resultado, use_container_width=True)
 
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -75,3 +89,8 @@ if archivos:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
+        # <<--- ESTE BLOQUE FALTABA Y CAUSABA EL ERROR DEL 'else:' VACÍO
+        st.warning("No se encontraron filas válidas para consolidar.")
+else:
+    st.info("Sube uno o varios archivos para comenzar.")
+
