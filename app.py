@@ -80,5 +80,80 @@ def procesar_informes(lista_archivos):
                 # Leer campos requeridos si existen los índices
                 lider = fila[idx_lider] if idx_lider is not None and idx_lider < len(fila) else None
                 linea = fila[idx_linea] if idx_linea is not None and idx_linea < len(fila) else None
-                indicador = fila[idx_indicador] if idx_indicador is not None and idx_indicador < len(fila) e_]()
+                indicador = fila[idx_indicador] if idx_indicador is not None and idx_indicador < len(fila) else None
+                desc = fila[idx_desc] if idx_desc is not None and idx_desc < len(fila) else None
+                meta = fila[idx_meta] if idx_meta is not None and idx_meta < len(fila) else None
+
+                # Si la fila clave está totalmente vacía, saltar
+                if all(pd.isna(x) or str(x).strip() == "" for x in [lider, linea, indicador, desc, meta]):
+                    continue
+
+                # Unificar Resultado: T (19) -> N (13) -> cualquier "Resultado*"
+                valor_T = fila[19] if (19 in columnas_resultado and 19 < len(fila)) else None
+                valor_N = fila[13] if (13 in columnas_resultado and 13 < len(fila)) else None
+
+                unificado = None
+                if pd.notna(valor_T) and str(valor_T).strip() != "":
+                    unificado = valor_T
+                elif pd.notna(valor_N) and str(valor_N).strip() != "":
+                    unificado = valor_N
+                else:
+                    for ci in sorted(columnas_resultado):
+                        if ci < len(fila):
+                            v = fila[ci]
+                            if pd.notna(v) and str(v).strip() != "":
+                                unificado = v
+                                break
+
+                resultados.append({
+                    "Delegación": delegacion,
+                    "Líder Estratégico": lider,
+                    "Línea de Acción": linea,
+                    "Indicador": indicador,
+                    "Descripción del Indicador": desc,
+                    "Meta": meta,
+                    "Resultado": unificado
+                })
+
+        except Exception as e:
+            st.error(f"❌ Error procesando '{archivo.name}': {e}")
+
+    df_final = pd.DataFrame(resultados)
+
+    # Orden final fijo (asegura columnas aunque alguna venga vacía en algún archivo)
+    cols = ["Delegación", "Líder Estratégico", "Línea de Acción", "Indicador", "Descripción del Indicador", "Meta", "Resultado"]
+    for c in cols:
+        if c not in df_final.columns:
+            df_final[c] = None
+
+    # Limpieza opcional: eliminar filas totalmente vacías en claves
+    key_cols = ["Líder Estratégico", "Línea de Acción", "Indicador", "Meta"]
+    if not df_final.empty:
+        df_final = df_final.dropna(subset=key_cols, how="all")
+
+    return df_final[cols] if not df_final.empty else df_final
+
+# Procesamiento
+if archivos:
+    df_resultado = procesar_informes(archivos)
+
+    if not df_resultado.empty:
+        st.success("✅ Archivos procesados correctamente.")
+        st.dataframe(df_resultado, use_container_width=True)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_resultado.to_excel(writer, index=False, sheet_name="Resumen Indicadores")
+
+        st.download_button(
+            label="📥 Descargar resumen en Excel",
+            data=output.getvalue(),
+            file_name="resumen_informe_avance.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.warning("No se encontraron filas válidas para consolidar.")
+else:
+    st.info("Sube uno o varios archivos para comenzar.")
+
 
