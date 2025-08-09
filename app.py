@@ -22,34 +22,43 @@ def procesar_informes(lista_archivos):
 
             df = pd.read_excel(xls, sheet_name="Informe de avance", header=None, engine="openpyxl")
 
-            # Celda G3 -> fila índice 2, columna índice 6
+            # Delegación en G3 (fila 3 -> index 2, col G -> index 6)
             delegacion = ""
             if df.shape[0] > 2 and df.shape[1] > 6:
                 delegacion = str(df.iloc[2, 6]).strip()
 
-            # Encabezados visibles en fila 10 -> índice 9
+            # Encabezados en fila 10 visible -> índice 9
             if df.shape[0] <= 9:
                 st.warning(f"⚠️ '{archivo.name}': no hay suficientes filas para leer encabezados (se esperaba fila 10).")
                 continue
 
-            encabezados = df.iloc[9]
-            columnas_resultado = [i for i, val in enumerate(encabezados) if str(val).strip().lower().startswith("resultado")]
+            encabezados = df.iloc[9].fillna("").astype(str)
+
+            # 1) Detectar todas las columnas cuyo encabezado empiece con "Resultado"
+            columnas_resultado = {i for i, val in enumerate(encabezados) if str(val).strip().lower().startswith("resultado")}
+
+            # 2) Forzar incluir N y T aunque no digan "Resultado"
+            #    N = columna 14 (índice 13), T = columna 20 (índice 19)
+            if df.shape[1] > 13:
+                columnas_resultado.add(13)
+            if df.shape[1] > 19:
+                columnas_resultado.add(19)
 
             # Datos desde la fila 11 -> índice 10
             for i in range(10, len(df)):
                 fila = df.iloc[i]
 
-                # Verificación mínima de ancho (necesitamos al menos hasta la col 7 para 'meta')
+                # Seguridad: necesitamos al menos hasta H (índice 7) para 'meta'
                 if len(fila) <= 7:
                     continue
 
-                lider = fila[3]
-                linea = fila[4]
-                tipo_indicador = fila[5]
-                meta = fila[7]
+                lider = fila[3]  # D
+                linea = fila[4]  # E
+                tipo_indicador = fila[5]  # F
+                meta = fila[7]   # H
 
                 if pd.notna(lider) and pd.notna(linea) and pd.notna(tipo_indicador) and pd.notna(meta):
-                    fila_resultado = {
+                    fila_out = {
                         "Delegación": delegacion,
                         "Líder Estratégico": lider,
                         "Línea de Acción": linea,
@@ -57,13 +66,41 @@ def procesar_informes(lista_archivos):
                         "Meta": meta
                     }
 
-                    # Extraer todas las columnas cuyo encabezado empiece con "Resultado"
-                    for col_index in columnas_resultado:
-                        if col_index < len(fila):
-                            nombre_col = str(encabezados[col_index])
-                            fila_resultado[nombre_col] = fila[col_index]
+                    # Guardar valores de N y T explícitamente (si existen)
+                    valor_N = None
+                    valor_T = None
 
-                    resultados.append(fila_resultado)
+                    # Copiar todas las columnas de resultado detectadas (incluidas N y T)
+                    for col_index in sorted(columnas_resultado):
+                        if col_index < len(fila):
+                            nombre_col = str(encabezados[col_index]).strip()
+                            # Si nombre vacío, etiquetar por letra
+                            if not nombre_col:
+                                nombre_col = "Resultado " + ("N" if col_index == 13 else "T" if col_index == 19 else f"Col{col_index+1}")
+                            fila_out[nombre_col] = fila[col_index]
+
+                            if col_index == 13:
+                                valor_N = fila[col_index]
+                            elif col_index == 19:
+                                valor_T = fila[col_index]
+
+                    # Campo unificado "Resultado": prioriza T sobre N; si ambos vacíos, pone el primero no nulo de cualquier "Resultado*"
+                    unificado = None
+                    if pd.notna(valor_T) and str(valor_T).strip() != "":
+                        unificado = valor_T
+                    elif pd.notna(valor_N) and str(valor_N).strip() != "":
+                        unificado = valor_N
+                    else:
+                        # Busca algún otro "Resultado*" con contenido
+                        for col_index in sorted(columnas_resultado):
+                            if col_index < len(fila):
+                                val = fila[col_index]
+                                if pd.notna(val) and str(val).strip() != "":
+                                    unificado = val
+                                    break
+
+                    fila_out["Resultado"] = unificado
+                    resultados.append(fila_out)
 
         except Exception as e:
             st.error(f"❌ Error procesando '{archivo.name}': {e}")
@@ -83,14 +120,4 @@ if archivos:
             df_resultado.to_excel(writer, index=False, sheet_name="Resumen Indicadores")
 
         st.download_button(
-            label="📥 Descargar resumen en Excel",
-            data=output.getvalue(),
-            file_name="resumen_informe_avance.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        # <<--- ESTE BLOQUE FALTABA Y CAUSABA EL ERROR DEL 'else:' VACÍO
-        st.warning("No se encontraron filas válidas para consolidar.")
-else:
-    st.info("Sube uno o varios archivos para comenzar.")
 
