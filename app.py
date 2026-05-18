@@ -72,7 +72,7 @@ def procesar_informes(lista_archivos):
             )
 
             delegacion = limpiar_texto(df.iloc[2, 7]) if df.shape[0] > 2 and df.shape[1] > 7 else ""
-            region = ""
+         
 
             for i in range(len(df)):
                 fila = df.iloc[i]
@@ -117,7 +117,6 @@ def procesar_informes(lista_archivos):
                             "ID_REGISTRO": id_registro,
                             "Archivo Origen": archivo.name,
                             "Delegación Policial": delegacion,
-                            "Delegación Regional": region,
                             "Número de Línea": numero_linea,
                             "Problemática": problematica,
                             "Líder Estratégico": lider_estrategico,
