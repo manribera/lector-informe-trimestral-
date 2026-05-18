@@ -1,12 +1,28 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 
-st.title("📋 Consolidado de Indicadores - Informe de Avance")
-st.write("Carga uno o varios archivos Excel para extraer indicadores desde la hoja **'Informe de avance'**.")
+st.set_page_config(page_title="Consolidador Líneas SIGESS", layout="wide")
 
-# Cargar múltiples archivos
-archivos = st.file_uploader("📁 Sube archivos .xlsm o .xlsx", type=["xlsm", "xlsx"], accept_multiple_files=True)
+st.title("📋 Consolidado de Líneas de Acción SIGESS 2026")
+st.write("Carga los archivos Excel de las delegaciones para extraer la planificación de líneas de acción desde la hoja **Informe de avance**.")
+
+archivos = st.file_uploader(
+    "📁 Sube archivos .xlsm o .xlsx",
+    type=["xlsm", "xlsx"],
+    accept_multiple_files=True
+)
+
+def limpiar_texto(valor):
+    if pd.isna(valor):
+        return ""
+    return str(valor).strip()
+
+def crear_id(delegacion, trimestre, consecutivo):
+    delegacion_limpia = re.sub(r"\s+", "_", delegacion.strip())
+    trimestre_limpio = re.sub(r"\s+", "_", trimestre.strip())
+    return f"{delegacion_limpia}_{trimestre_limpio}_{consecutivo:03d}"
 
 @st.cache_data
 def procesar_informes(lista_archivos):
@@ -20,63 +36,95 @@ def procesar_informes(lista_archivos):
                 st.warning(f"⚠️ El archivo '{archivo.name}' no tiene hoja 'Informe de avance'. Se omite.")
                 continue
 
-            df = pd.read_excel(xls, sheet_name="Informe de avance", header=None, engine="openpyxl")
-            delegacion = str(df.iloc[2, 7]).strip()  # Celda G3
+            df = pd.read_excel(
+                xls,
+                sheet_name="Informe de avance",
+                header=None,
+                engine="openpyxl"
+            )
 
-            # Identificar columnas de resultados desde fila 9
+            # Ajustar estas celdas si el formato cambia
+            delegacion = limpiar_texto(df.iloc[2, 7]) if df.shape[0] > 2 and df.shape[1] > 7 else ""
+            region = limpiar_texto(df.iloc[1, 7]) if df.shape[0] > 1 and df.shape[1] > 7 else ""
+            trimestre = limpiar_texto(df.iloc[3, 7]) if df.shape[0] > 3 and df.shape[1] > 7 else ""
+
             encabezados = df.iloc[9]
-            columnas_resultado = [i for i, val in enumerate(encabezados) if str(val).lower().startswith("resultado")]
+            columnas_resultado = [
+                i for i, val in enumerate(encabezados)
+                if str(val).lower().strip().startswith("resultado")
+            ]
 
-            for i in range(10, len(df)):  # Empezamos desde fila 10
+            consecutivo = 1
+
+            for i in range(10, len(df)):
                 fila = df.iloc[i]
 
-                lider = fila[3]
-                linea = fila[4]
-                tipo_indicador = fila[5]
-                meta = fila[7]
+                lider = limpiar_texto(fila[3]) if len(fila) > 3 else ""
+                linea = limpiar_texto(fila[4]) if len(fila) > 4 else ""
+                indicador = limpiar_texto(fila[5]) if len(fila) > 5 else ""
+                meta = limpiar_texto(fila[7]) if len(fila) > 7 else ""
 
-                if pd.notna(lider) and pd.notna(linea) and pd.notna(tipo_indicador) and pd.notna(meta):
-                    fila_resultado = {
-                        "Delegación": delegacion,
-                        "Líder Estratégico": lider,
+                if lider and linea and indicador and meta:
+                    id_linea = crear_id(delegacion, trimestre, consecutivo)
+
+                    registro = {
+                        "ID_LINEA": id_linea,
+                        "Archivo Origen": archivo.name,
+                        "Delegación Policial": delegacion,
+                        "Delegación Regional": region,
+                        "Trimestre": trimestre,
+                        "Número de Línea": consecutivo,
                         "Línea de Acción": linea,
-                        "Tipo de Indicador": tipo_indicador,
-                        "Meta": meta
+                        "Problemática": "",
+                        "Líder Estratégico": lider,
+                        "Indicador": indicador,
+                        "Meta": meta,
+                        "Responsable": "",
+                        "Cogestor": "",
+                        "Estado Base": "Activa"
                     }
 
-                    # Extraer todos los campos que sean "Resultado"
                     for col_index in columnas_resultado:
-                        nombre_col = encabezados[col_index]
-                        fila_resultado[nombre_col] = fila[col_index]
+                        nombre_col = limpiar_texto(encabezados[col_index])
+                        registro[nombre_col] = fila[col_index]
 
-                    resultados.append(fila_resultado)
+                    resultados.append(registro)
+                    consecutivo += 1
 
         except Exception as e:
             st.error(f"❌ Error procesando '{archivo.name}': {e}")
 
     return pd.DataFrame(resultados)
 
-# Procesamiento
 if archivos:
     df_resultado = procesar_informes(archivos)
 
     if not df_resultado.empty:
         st.success("✅ Archivos procesados correctamente.")
-        st.dataframe(df_resultado)
+
+        st.subheader("Vista previa del consolidado")
+        st.dataframe(df_resultado, use_container_width=True)
+
+        st.metric("Total de líneas extraídas", len(df_resultado))
+        st.metric("Total de delegaciones procesadas", df_resultado["Delegación Policial"].nunique())
 
         output = io.BytesIO()
+
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_resultado.to_excel(writer, index=False, sheet_name="Resumen Indicadores")
+            df_resultado.to_excel(
+                writer,
+                index=False,
+                sheet_name="PLANIFICACION_LINEAS_BASE"
+            )
 
         st.download_button(
-            label="📥 Descargar resumen en Excel",
+            label="📥 Descargar PLANIFICACION_LINEAS_BASE",
             data=output.getvalue(),
-            file_name="resumen_informe_avance.xlsx",
+            file_name="PLANIFICACION_LINEAS_BASE.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
     else:
         st.info("ℹ️ No se encontraron datos válidos.")
-
-
 
 
