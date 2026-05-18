@@ -6,7 +6,7 @@ import re
 st.set_page_config(page_title="Consolidador Líneas SIGESS", layout="wide")
 
 st.title("📋 Consolidado de Líneas de Acción SIGESS 2026")
-st.write("Carga los archivos Excel de las delegaciones para extraer la planificación de líneas de acción desde la hoja **Informe de avance**.")
+st.write("Carga archivos Excel para extraer líneas, indicadores y metas desde la hoja Informe de avance.")
 
 archivos = st.file_uploader(
     "📁 Sube archivos .xlsm o .xlsx",
@@ -19,10 +19,28 @@ def limpiar_texto(valor):
         return ""
     return str(valor).strip()
 
-def crear_id(delegacion, trimestre, consecutivo):
-    delegacion_limpia = re.sub(r"\s+", "_", delegacion.strip())
-    trimestre_limpio = re.sub(r"\s+", "_", trimestre.strip())
-    return f"{delegacion_limpia}_{trimestre_limpio}_{consecutivo:03d}"
+def normalizar_lider(valor):
+    valor = limpiar_texto(valor).lower()
+
+    if "municipal" in valor or "gobierno local" in valor or valor == "gl":
+        return "Gobierno Local"
+
+    if "fuerza" in valor or valor == "fp":
+        return "Fuerza Pública"
+
+    return limpiar_texto(valor)
+
+def extraer_numero_linea(texto):
+    texto = limpiar_texto(texto)
+    match = re.search(r"#\s*(\d+)", texto)
+    if match:
+        return int(match.group(1))
+    return ""
+
+def crear_id_registro(delegacion, trimestre, numero_linea, numero_indicador):
+    delegacion = re.sub(r"\s+", "_", limpiar_texto(delegacion))
+    trimestre = re.sub(r"\s+", "_", limpiar_texto(trimestre))
+    return f"{delegacion}_{trimestre}_L{numero_linea}_I{numero_indicador}"
 
 @st.cache_data
 def procesar_informes(lista_archivos):
@@ -43,53 +61,72 @@ def procesar_informes(lista_archivos):
                 engine="openpyxl"
             )
 
-            # Ajustar estas celdas si el formato cambia
             delegacion = limpiar_texto(df.iloc[2, 7]) if df.shape[0] > 2 and df.shape[1] > 7 else ""
-            region = limpiar_texto(df.iloc[1, 7]) if df.shape[0] > 1 and df.shape[1] > 7 else ""
-            trimestre = limpiar_texto(df.iloc[3, 7]) if df.shape[0] > 3 and df.shape[1] > 7 else ""
+            region = ""
 
-            encabezados = df.iloc[9]
-            columnas_resultado = [
-                i for i, val in enumerate(encabezados)
-                if str(val).lower().strip().startswith("resultado")
-            ]
-
-            consecutivo = 1
-
-            for i in range(10, len(df)):
+            # Buscar bloques de Línea de Acción
+            for i in range(len(df)):
                 fila = df.iloc[i]
 
-                lider = limpiar_texto(fila[3]) if len(fila) > 3 else ""
-                linea = limpiar_texto(fila[4]) if len(fila) > 4 else ""
-                indicador = limpiar_texto(fila[5]) if len(fila) > 5 else ""
-                meta = limpiar_texto(fila[7]) if len(fila) > 7 else ""
+                texto_linea = limpiar_texto(fila[3]) if len(fila) > 3 else ""
 
-                if lider and linea and indicador and meta:
-                    id_linea = crear_id(delegacion, trimestre, consecutivo)
+                if texto_linea.lower().startswith("linea de accion"):
+                    numero_linea = extraer_numero_linea(texto_linea)
 
-                    registro = {
-                        "ID_LINEA": id_linea,
-                        "Archivo Origen": archivo.name,
-                        "Delegación Policial": delegacion,
-                        "Delegación Regional": region,
-                        "Trimestre": trimestre,
-                        "Número de Línea": consecutivo,
-                        "Línea de Acción": linea,
-                        "Problemática": "",
-                        "Líder Estratégico": lider,
-                        "Indicador": indicador,
-                        "Meta": meta,
-                        "Responsable": "",
-                        "Cogestor": "",
-                        "Estado Base": "Activa"
-                    }
+                    problematica = limpiar_texto(fila[5]) if len(fila) > 5 else ""
+                    lider_bloque = normalizar_lider(fila[7]) if len(fila) > 7 else ""
 
-                    for col_index in columnas_resultado:
-                        nombre_col = limpiar_texto(encabezados[col_index])
-                        registro[nombre_col] = fila[col_index]
+                    # Buscar trimestres en el bloque
+                    trimestre = limpiar_texto(fila[10]) if len(fila) > 10 else ""
 
-                    resultados.append(registro)
-                    consecutivo += 1
+                    # Los indicadores normalmente empiezan 4 filas después del título del bloque
+                    fila_inicio_indicadores = i + 4
+                    fila_fin_bloque = i + 20
+
+                    numero_indicador_real = 1
+
+                    for j in range(fila_inicio_indicadores, min(fila_fin_bloque, len(df))):
+                        fila_ind = df.iloc[j]
+
+                        sigla_lider = limpiar_texto(fila_ind[2]) if len(fila_ind) > 2 else ""
+                        responsable = limpiar_texto(fila_ind[3]) if len(fila_ind) > 3 else ""
+                        indicador_num = limpiar_texto(fila_ind[4]) if len(fila_ind) > 4 else ""
+                        indicador = limpiar_texto(fila_ind[5]) if len(fila_ind) > 5 else ""
+                        meta = limpiar_texto(fila_ind[7]) if len(fila_ind) > 7 else ""
+
+                        # Evita filas vacías tipo "Indicador 4" sin descripción ni meta
+                        if not indicador or not meta:
+                            continue
+
+                        lider_estrategico = lider_bloque
+
+                        if not lider_estrategico:
+                            lider_estrategico = normalizar_lider(responsable or sigla_lider)
+
+                        id_registro = crear_id_registro(
+                            delegacion,
+                            trimestre,
+                            numero_linea,
+                            numero_indicador_real
+                        )
+
+                        resultados.append({
+                            "ID_REGISTRO": id_registro,
+                            "Archivo Origen": archivo.name,
+                            "Delegación Policial": delegacion,
+                            "Delegación Regional": region,
+                            "Trimestre": trimestre,
+                            "Número de Línea": numero_linea,
+                            "Problemática": problematica,
+                            "Líder Estratégico": lider_estrategico,
+                            "Responsable": responsable,
+                            "Indicador Número": indicador_num,
+                            "Indicador": indicador,
+                            "Meta": meta,
+                            "Estado Base": "Activa"
+                        })
+
+                        numero_indicador_real += 1
 
         except Exception as e:
             st.error(f"❌ Error procesando '{archivo.name}': {e}")
@@ -102,11 +139,12 @@ if archivos:
     if not df_resultado.empty:
         st.success("✅ Archivos procesados correctamente.")
 
+        st.metric("Total de indicadores extraídos", len(df_resultado))
+        st.metric("Total de delegaciones procesadas", df_resultado["Delegación Policial"].nunique())
+        st.metric("Total de líneas reales", df_resultado[["Delegación Policial", "Número de Línea"]].drop_duplicates().shape[0])
+
         st.subheader("Vista previa del consolidado")
         st.dataframe(df_resultado, use_container_width=True)
-
-        st.metric("Total de líneas extraídas", len(df_resultado))
-        st.metric("Total de delegaciones procesadas", df_resultado["Delegación Policial"].nunique())
 
         output = io.BytesIO()
 
@@ -126,5 +164,3 @@ if archivos:
 
     else:
         st.info("ℹ️ No se encontraron datos válidos.")
-
-
