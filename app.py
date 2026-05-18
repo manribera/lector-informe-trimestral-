@@ -6,7 +6,10 @@ import re
 st.set_page_config(page_title="Consolidador Líneas SIGESS", layout="wide")
 
 st.title("📋 Consolidado de Líneas de Acción SIGESS 2026")
-st.write("Carga archivos Excel para extraer líneas, indicadores y metas desde la hoja Informe de avance.")
+st.write(
+    "Carga archivos Excel para extraer la planificación base de líneas, "
+    "indicadores y metas desde la hoja **Informe de avance**."
+)
 
 archivos = st.file_uploader(
     "📁 Sube archivos .xlsm o .xlsx",
@@ -14,13 +17,16 @@ archivos = st.file_uploader(
     accept_multiple_files=True
 )
 
+
 def limpiar_texto(valor):
     if pd.isna(valor):
         return ""
     return str(valor).strip()
 
+
 def normalizar_lider(valor):
-    valor = limpiar_texto(valor).lower()
+    valor_original = limpiar_texto(valor)
+    valor = valor_original.lower()
 
     if "municipal" in valor or "gobierno local" in valor or valor == "gl":
         return "Gobierno Local"
@@ -28,7 +34,8 @@ def normalizar_lider(valor):
     if "fuerza" in valor or valor == "fp":
         return "Fuerza Pública"
 
-    return limpiar_texto(valor)
+    return valor_original
+
 
 def extraer_numero_linea(texto):
     texto = limpiar_texto(texto)
@@ -37,10 +44,11 @@ def extraer_numero_linea(texto):
         return int(match.group(1))
     return ""
 
-def crear_id_registro(delegacion, trimestre, numero_linea, numero_indicador):
+
+def crear_id_registro(delegacion, numero_linea, numero_indicador):
     delegacion = re.sub(r"\s+", "_", limpiar_texto(delegacion))
-    trimestre = re.sub(r"\s+", "_", limpiar_texto(trimestre))
-    return f"{delegacion}_{trimestre}_L{numero_linea}_I{numero_indicador}"
+    return f"{delegacion}_L{numero_linea}_I{numero_indicador}"
+
 
 @st.cache_data
 def procesar_informes(lista_archivos):
@@ -51,7 +59,9 @@ def procesar_informes(lista_archivos):
             xls = pd.ExcelFile(archivo, engine="openpyxl")
 
             if "Informe de avance" not in xls.sheet_names:
-                st.warning(f"⚠️ El archivo '{archivo.name}' no tiene hoja 'Informe de avance'. Se omite.")
+                st.warning(
+                    f"⚠️ El archivo '{archivo.name}' no tiene hoja 'Informe de avance'. Se omite."
+                )
                 continue
 
             df = pd.read_excel(
@@ -64,7 +74,6 @@ def procesar_informes(lista_archivos):
             delegacion = limpiar_texto(df.iloc[2, 7]) if df.shape[0] > 2 and df.shape[1] > 7 else ""
             region = ""
 
-            # Buscar bloques de Línea de Acción
             for i in range(len(df)):
                 fila = df.iloc[i]
 
@@ -76,10 +85,6 @@ def procesar_informes(lista_archivos):
                     problematica = limpiar_texto(fila[5]) if len(fila) > 5 else ""
                     lider_bloque = normalizar_lider(fila[7]) if len(fila) > 7 else ""
 
-                    # Buscar trimestres en el bloque
-                    trimestre = limpiar_texto(fila[10]) if len(fila) > 10 else ""
-
-                    # Los indicadores normalmente empiezan 4 filas después del título del bloque
                     fila_inicio_indicadores = i + 4
                     fila_fin_bloque = i + 20
 
@@ -94,7 +99,6 @@ def procesar_informes(lista_archivos):
                         indicador = limpiar_texto(fila_ind[5]) if len(fila_ind) > 5 else ""
                         meta = limpiar_texto(fila_ind[7]) if len(fila_ind) > 7 else ""
 
-                        # Evita filas vacías tipo "Indicador 4" sin descripción ni meta
                         if not indicador or not meta:
                             continue
 
@@ -105,7 +109,6 @@ def procesar_informes(lista_archivos):
 
                         id_registro = crear_id_registro(
                             delegacion,
-                            trimestre,
                             numero_linea,
                             numero_indicador_real
                         )
@@ -115,7 +118,6 @@ def procesar_informes(lista_archivos):
                             "Archivo Origen": archivo.name,
                             "Delegación Policial": delegacion,
                             "Delegación Regional": region,
-                            "Trimestre": trimestre,
                             "Número de Línea": numero_linea,
                             "Problemática": problematica,
                             "Líder Estratégico": lider_estrategico,
@@ -133,15 +135,25 @@ def procesar_informes(lista_archivos):
 
     return pd.DataFrame(resultados)
 
+
 if archivos:
     df_resultado = procesar_informes(archivos)
 
     if not df_resultado.empty:
         st.success("✅ Archivos procesados correctamente.")
 
-        st.metric("Total de indicadores extraídos", len(df_resultado))
-        st.metric("Total de delegaciones procesadas", df_resultado["Delegación Policial"].nunique())
-        st.metric("Total de líneas reales", df_resultado[["Delegación Policial", "Número de Línea"]].drop_duplicates().shape[0])
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total de indicadores extraídos", len(df_resultado))
+        col2.metric(
+            "Total de delegaciones procesadas",
+            df_resultado["Delegación Policial"].nunique()
+        )
+        col3.metric(
+            "Total de líneas reales",
+            df_resultado[["Delegación Policial", "Número de Línea"]]
+            .drop_duplicates()
+            .shape[0]
+        )
 
         st.subheader("Vista previa del consolidado")
         st.dataframe(df_resultado, use_container_width=True)
